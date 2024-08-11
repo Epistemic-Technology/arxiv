@@ -37,11 +37,43 @@ func TestMakeGetQuery(t *testing.T) {
 			},
 			"search_query=au%3Adel_maestro+ANDNOT+%28ti%3Acheckerboard+OR+ti%3APyrochlore%29",
 		},
+		{
+			SearchParams{
+				Query:     "all:electron",
+				SortBy:    SortByRelevance,
+				SortOrder: SortOrderAscending,
+			},
+			"search_query=all%3Aelectron&sortBy=relevance&sortOrder=ascending",
+		},
+		{
+			SearchParams{
+				Query:     "all:electron",
+				SortBy:    SortByLastUpdatedDate,
+				SortOrder: SortOrderDescending,
+			},
+			"search_query=all%3Aelectron&sortBy=lastUpdatedDate&sortOrder=descending",
+		},
+		{
+			SearchParams{
+				Query:     "all:electron",
+				SortBy:    SortBySubmittedDate,
+				SortOrder: SortOrderAscending,
+			},
+			"search_query=all%3Aelectron&sortBy=submittedDate&sortOrder=ascending",
+		},
+		{
+			SearchParams{
+				Query:      "all:electron",
+				Start:      10,
+				MaxResults: 50,
+			},
+			"max_results=50&search_query=all%3Aelectron&start=10",
+		},
 	}
 	for _, test := range tests {
 		got := makeGetQuery(test.params)
 		if got != test.want {
-			t.Errorf("makeGetQ(%v) = %v; want %v", test.params, got, test.want)
+			t.Errorf("makeGetQuery(%v) = %v; want %v", test.params, got, test.want)
 		}
 	}
 }

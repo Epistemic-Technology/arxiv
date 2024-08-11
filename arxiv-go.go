@@ -1,10 +1,9 @@
 package arxivgo
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
-	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,16 +18,16 @@ const (
 type SortBy string
 
 const (
-	SB_Relevance       SortBy = "relevance"
-	SB_LastUpdatedDate SortBy = "lastUpdatedDate"
-	SB_SubmittedDate   SortBy = "submittedDate"
+	SortByRelevance       SortBy = "relevance"
+	SortByLastUpdatedDate SortBy = "lastUpdatedDate"
+	SortBySubmittedDate   SortBy = "submittedDate"
 )
 
 type SortOrder string
 
 const (
-	SO_Ascending  SortOrder = "ascending"
-	SO_Descending SortOrder = "descending"
+	SortOrderAscending  SortOrder = "ascending"
+	SortOrderDescending SortOrder = "descending"
 )
 
 type Config struct {
@@ -46,12 +45,12 @@ var DefaultConfig = Config{
 }
 
 type SearchParams struct {
-	Query      string    `query:"search_query"`
-	IdList     []string  `query:"id_list"`
-	Start      int       `query:"start"`
-	MaxResults int       `query:"max_results"`
-	SortBy     SortBy    `query:"sortBy"`
-	SortOrder  SortOrder `query:"sortOrder"`
+	Query      string
+	IdList     []string
+	Start      int
+	MaxResults int
+	SortBy     SortBy
+	SortOrder  SortOrder
 }
 
 type Author struct {
@@ -112,31 +111,30 @@ func Search(requester Requester, params SearchParams) ([]EntryMetadata, error) {
 }
 
 func makeGetQuery(params SearchParams) string {
-	// Doing a bunch of reflect nonsense so that we can build query strings
-	// from the struct tags.
-	v := reflect.ValueOf(params)
-	q := url.Values{}
 
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Type().Field(i)
-		tag := field.Tag.Get("query")
-		var value string
-		if v.Field(i).Kind() == reflect.Slice {
-			s := reflect.ValueOf(v.Field(i).Interface())
-			sliceStrings := make([]string, s.Len())
-			for i := 0; i < s.Len(); i++ {
-				sliceStrings[i] = fmt.Sprint(s.Index(i))
-			}
-			value = strings.Join(sliceStrings, ",")
-		} else {
-			value = fmt.Sprintf("%v", v.Field(i))
-		}
-		if value != "" && value != "0" {
-			q.Add(tag, value)
-		}
+	query := url.Values{}
+
+	if params.Query != "" {
+		query.Add("search_query", params.Query)
+	}
+	if len(params.IdList) > 0 {
+		idListStr := strings.Join(params.IdList, ",")
+		query.Add("id_list", idListStr)
+	}
+	if params.Start > 0 {
+		query.Add("start", strconv.Itoa(params.Start))
+	}
+	if params.MaxResults > 0 {
+		query.Add("max_results", strconv.Itoa(params.MaxResults))
+	}
+	if params.SortBy != "" {
+		query.Add("sortBy", string(params.SortBy))
+	}
+	if params.SortOrder != "" {
+		query.Add("sortOrder", string(params.SortOrder))
 	}
 
-	return q.Encode()
+	return query.Encode()
 }
 
 func doGetRequest(config Config, params SearchParams) (*http.Response, error) {
