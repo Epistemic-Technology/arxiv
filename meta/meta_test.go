@@ -1,4 +1,4 @@
-package arxivmeta
+package meta
 
 import (
 	"net/http"

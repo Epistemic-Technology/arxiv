@@ -10,24 +10,24 @@
 //	         "github.com/mikethicke/arxiv-go"
 //	   )
 //	   func main() {
-//	         params := arxivmeta.SearchParams{
+//	         params := meta.SearchParams{
 //	                 Query: "all:electron",
 //	         }
-//	         requester := arxivmeta.MakeRequester(arxivgo.DefaultConfig)
-//	         response, err := arxivmeta.Search(requester, params)
+//	         requester := meta.MakeRequester(arxivgo.DefaultConfig)
+//	         response, err := meta.Search(requester, params)
 //	         if err != nil {
 //	                 panic(err)
 //	         }
 //	         for _, entry := range response.Entries {
 //					  // Do something
 //	         }
-//	         nextPage, err := arxivmeta.SearchNext(requester, response)
+//	         nextPage, err := meta.SearchNext(requester, response)
 //	         // Do something
 //	    }
 //
 // [ArXiv]: https://arxiv.org/
 // [ArXiv API User Manual]: https://info.arxiv.org/help/api/user-manual.html
-package arxivmeta
+package meta
 
 import (
 	"context"
