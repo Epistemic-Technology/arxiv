@@ -1,4 +1,4 @@
-module github.com/mikethicke/arxiv-go
+module github.com/Epistemic-Technology/arxiv
 
 go 1.21.5
 
