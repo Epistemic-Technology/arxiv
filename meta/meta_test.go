@@ -121,6 +121,26 @@ func TestSearchWorksWithDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestSearchIteratesOverMultiplePages(t *testing.T) {
+	requester := MakeRequester(DefaultConfig)
+	params := SearchParams{
+		Query: "all:electron",
+	}
+	count := 0
+	for result := range SearchIter(requester, params) {
+		if result.ID == "" {
+			t.Errorf("SearchIter() = %v; want non-empty string", result.ID)
+		}
+		count++
+		if count > 30 {
+			break
+		}
+	}
+	if count < 30 {
+		t.Errorf("SearchIter() = %v; want at least 30 results", count)
+	}
+}
+
 func TestParseResponse(t *testing.T) {
 	file, err := os.Open("test_data/full-results.xml")
 	if err != nil {

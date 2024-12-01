@@ -34,6 +34,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"iter"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -220,6 +221,27 @@ func SearchPrevious(requester Requester, response SearchResponse) (SearchRespons
 		response.Params.Start = 0
 	}
 	return Search(requester, response.Params)
+}
+
+// Returns an iterator over the search results. The iterator will make multiple requests to the API as needed.
+func SearchIter(requester Requester, params SearchParams) iter.Seq[EntryMetadata] {
+	return func(yield func(EntryMetadata) bool) {
+		for {
+			response, err := Search(requester, params)
+			if err != nil {
+				return
+			}
+			for _, entry := range response.Entries {
+				if !yield(entry) {
+					return
+				}
+			}
+			if !SearchHasMoreResults(response) {
+				return
+			}
+			params.Start = response.StartIndex + response.ItemsPerPage
+		}
+	}
 }
 
 // SearchHasMoreResults returns true if there are more results available for the search query.
