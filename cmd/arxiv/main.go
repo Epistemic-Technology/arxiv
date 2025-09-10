@@ -22,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	params := arxiv.SearchParams{
-		Query:      arxiv.Query(*query),
+		Query:      *query,
 		IdList:     strings.Split(*idList, ","),
 		Start:      *start,
 		MaxResults: *maxResults,

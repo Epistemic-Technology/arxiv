@@ -134,7 +134,7 @@ const (
 //
 // [arXiv API documentation]: https://info.arxiv.org/help/api/user-manual.html#_query_interface
 type SearchParams struct {
-	Query      Query
+	Query      string
 	IdList     []string
 	Start      int
 	MaxResults int
@@ -325,7 +325,7 @@ func DoPostRequest(ctx context.Context, client *Client, params SearchParams) (*h
 		return nil, err
 	}
 	if params.Query != "" {
-		req.Header.Add("search_query", string(params.Query))
+		req.Header.Add("search_query", params.Query)
 	}
 	if len(params.IdList) > 0 {
 		idListStr := strings.Join(params.IdList, ",")
@@ -376,7 +376,7 @@ func makeGetQuery(params SearchParams) string {
 	query := url.Values{}
 
 	if params.Query != "" {
-		query.Add("search_query", string(params.Query))
+		query.Add("search_query", params.Query)
 	}
 	if len(params.IdList) > 0 {
 		idListStr := strings.Join(params.IdList, ",")

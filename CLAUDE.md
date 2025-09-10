@@ -11,24 +11,65 @@ This is a Go library that provides a client interface to the arXiv.org metadata 
 ## Key Architecture Components
 
 ### Core Library (`arxiv/` package)
-- **arxiv.go**: Main API client implementation with:
+
+#### Main Client (`arxiv.go`)
+- **Client**: Main struct with configurable BaseURL, RequestMethod, Timeout, and RateLimit
+- **ClientOption**: Functional options pattern for client configuration
+- **Features**:
   - Client-based architecture using `Client` struct with configurable options
   - Rate limiting (respects arXiv's 3-second delay requirement) using `golang.org/x/time/rate`
   - Support for GET and POST request methods
   - XML response parsing
   - Iterator pattern for large result sets (using Go 1.23's `iter.Seq`)
   - Context support for cancellation and timeouts
-- **Client**: Main struct with configurable BaseURL, RequestMethod, Timeout, and RateLimit
-- **ClientOption**: Functional options pattern for client configuration
+
+#### Query Builder (`query.go`)
+- **SearchQuery**: Fluent query builder for constructing complex arXiv search queries
+- **Query Operations**:
+  - Field-specific searches: Title, Abstract, Author, Category, Comment, Journal, All
+  - Boolean operators: And(), Or(), AndNot()
+  - Grouping: Group() for complex boolean expressions
+  - Date ranges: SubmittedBetween(), LastUpdatedBetween()
+- **Query Components**:
+  - `queryNode` interface for building query trees
+  - `fieldQuery`, `groupQuery`, `operatorNode`, `dateRangeQuery` implementations
+  - `ParseSearchQuery()` for parsing query strings back into SearchQuery objects
+- **Usage Example**:
+  ```go
+  query := NewSearchQuery().
+      Group(func(g *SearchQuery) {
+          g.Title("graph neural networks").Or().Abstract("graph neural networks")
+      }).
+      And().
+      Category("cs.LG").
+      AndNot().
+      Author("Doe, John")
+  ```
+
+#### Data Types
 - **SearchParams**: Configures search requests (Query, IdList, Start, MaxResults, SortBy, SortOrder)
 - **SearchResponse**: Contains parsed results with metadata
 - **EntryMetadata**: Individual paper data (Title, Authors, Abstract, Categories, Links, DOI, etc.)
+- **RequestMethod**: Typed constant for GET/POST
+- **SortBy**: Typed constants (SortByRelevance, SortByLastUpdatedDate, SortBySubmittedDate)
+- **SortOrder**: Typed constants (SortOrderAscending, SortOrderDescending)
 
 ### CLI Tool (`cmd/arxiv/`)
 - Command-line interface for searching arXiv
 - Outputs results in tabular format using `text/tabwriter`
 - Supports all search parameters via flags
 - Uses context for proper request handling
+
+### Testing
+- **Unit Tests** (`arxiv_test.go`, `query_test.go`):
+  - Tests with mock data in `arxiv/test_data/`
+  - Query builder tests for all operations
+  - Parser tests for query strings
+- **Integration Tests** (`query_integration_test.go`):
+  - Real API calls to arXiv (skipped in short mode)
+  - Tests for all query types and operators
+  - Verification of sorting and pagination
+  - Iterator pattern testing
 
 ## Common Development Commands
 
@@ -48,6 +89,12 @@ go test -cover ./arxiv
 
 # Test with race detection
 go test -race ./...
+
+# Run integration tests (hits real API)
+go test -v ./arxiv -run Integration
+
+# Skip integration tests (unit tests only)
+go test -short ./...
 ```
 
 ### Building
@@ -85,24 +132,30 @@ go mod tidy
 
 ## Important Implementation Notes
 
-1. **Client-based Architecture**: The library now uses a `Client` struct with functional options pattern for configuration. Create a client with `NewClient()` and pass options like `WithTimeout()`, `WithRateLimit()`, etc.
+1. **Client-based Architecture**: The library uses a `Client` struct with functional options pattern for configuration. Create a client with `NewClient()` and pass options like `WithTimeout()`, `WithRateLimit()`, etc.
 
-2. **Rate Limiting**: The library enforces a minimum 3-second delay between API requests to comply with arXiv's usage policy using `golang.org/x/time/rate` limiter. Configurable via `WithRateLimit()` option.
+2. **Query Builder Pattern**: The `SearchQuery` type provides a fluent interface for building complex queries programmatically. This makes it easier to construct dynamic queries compared to manual string concatenation.
 
-3. **Context Support**: All API methods now accept a `context.Context` parameter for proper cancellation and timeout handling.
+3. **Rate Limiting**: The library enforces a minimum 3-second delay between API requests to comply with arXiv's usage policy using `golang.org/x/time/rate` limiter. Configurable via `WithRateLimit()` option.
 
-4. **Testing**: Tests include both unit tests with mock data (in `arxiv/test_data/`) and integration tests that hit the real arXiv API. Be mindful of rate limits when running tests.
+4. **Context Support**: All API methods accept a `context.Context` parameter for proper cancellation and timeout handling.
 
-5. **Error Handling**: The library returns errors from all operations. Always check errors, especially for network operations. Parameter validation is performed before making requests.
+5. **Testing Strategy**: 
+   - Unit tests use mock XML data to test parsing logic
+   - Integration tests verify real API behavior but respect rate limits
+   - Use `-short` flag to skip integration tests during rapid development
 
-6. **Iterator Pattern**: The `SearchIter` method uses Go 1.23's iterator pattern (`iter.Seq`) for efficient processing of large result sets without loading all results into memory at once.
+6. **Error Handling**: The library returns errors from all operations. Always check errors, especially for network operations. Parameter validation is performed before making requests.
 
-7. **XML Parsing**: Response parsing handles the Atom feed format returned by arXiv's API. Test data files in `arxiv/test_data/` show expected XML structure.
+7. **Iterator Pattern**: The `SearchIter` method uses Go 1.23's iterator pattern (`iter.Seq`) for efficient processing of large result sets without loading all results into memory at once.
 
-8. **Type Safety**: The library uses typed constants for `RequestMethod`, `SortBy`, and `SortOrder` to provide compile-time safety and better documentation.
+8. **XML Parsing**: Response parsing handles the Atom feed format returned by arXiv's API. Test data files in `arxiv/test_data/` show expected XML structure.
+
+9. **Type Safety**: The library uses typed constants for `RequestMethod`, `SortBy`, and `SortOrder` to provide compile-time safety and better documentation.
 
 ## API Usage Examples
 
+### Basic Search
 ```go
 // Create a client with custom configuration
 client := arxiv.NewClient(
@@ -110,7 +163,7 @@ client := arxiv.NewClient(
     arxiv.WithRateLimit(5 * time.Second),
 )
 
-// Search with parameters
+// Simple search with parameters
 ctx := context.Background()
 params := arxiv.SearchParams{
     Query:      "all:electron",
@@ -118,9 +171,49 @@ params := arxiv.SearchParams{
     SortBy:     arxiv.SortByRelevance,
 }
 response, err := client.Search(ctx, params)
+```
 
-// Use iterator for large result sets
+### Using the Query Builder
+```go
+// Build a complex query
+query := arxiv.NewSearchQuery().
+    Group(func(g *arxiv.SearchQuery) {
+        g.Title("quantum computing").Or().Abstract("quantum computing")
+    }).
+    And().
+    Category("quant-ph").
+    SubmittedBetween(time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), time.Now())
+
+// Use the query
+params := arxiv.SearchParams{
+    Query:      query.String(),
+    MaxResults: 20,
+    SortBy:     arxiv.SortBySubmittedDate,
+    SortOrder:  arxiv.SortOrderDescending,
+}
+response, err := client.Search(ctx, params)
+```
+
+### Iterator for Large Result Sets
+```go
+// Process results in batches
+params := arxiv.SearchParams{
+    Query:      arxiv.NewSearchQuery().Category("cs.LG").String(),
+    MaxResults: 100,
+}
+
 for entry := range client.SearchIter(ctx, params) {
     // Process each entry
+    fmt.Printf("Title: %s\n", entry.Title)
+    fmt.Printf("Authors: %v\n", entry.Authors)
+    // Iterator handles pagination automatically
 }
+```
+
+### Search by arXiv IDs
+```go
+params := arxiv.SearchParams{
+    IdList: []string{"2408.03982", "2408.03988", "2408.04000"},
+}
+response, err := client.Search(ctx, params)
 ```
