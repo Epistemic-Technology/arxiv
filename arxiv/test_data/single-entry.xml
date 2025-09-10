@@ -1,0 +1,24 @@
+<entry>
+        <id>http://arxiv.org/abs/cond-mat/12345v1</id>
+        <updated>2001-02-28T20:12:09Z</updated>
+        <published>2001-02-28T20:12:09Z</published>
+        <title>The Title</title>
+        <summary>The Summary</summary>
+        <author>
+            <name>First Author</name>
+            <arxiv:affiliation xmlns:arxiv="http://arxiv.org/schemas/atom">First Affiliation</arxiv:affiliation>
+        </author>
+        <author>
+            <name>Second Author</name>
+            <arxiv:affiliation xmlns:arxiv="http://arxiv.org/schemas/atom">Second Affiliation</arxiv:affiliation>
+        </author>
+        <arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.9090/1.12345</arxiv:doi>
+        <link title="doi" href="http://dx.doi.org/10.9090/1.12345" rel="related"/>
+        <arxiv:comment xmlns:arxiv="http://arxiv.org/schemas/atom">The Comment</arxiv:comment>
+        <arxiv:journal_ref xmlns:arxiv="http://arxiv.org/schemas/atom">Journal Reference</arxiv:journal_ref>
+        <link href="http://arxiv.org/abs/path" rel="alternate" type="text/html"/>
+        <link title="pdf" href="http://arxiv.org/pdf/path" rel="related" type="application/pdf"/>
+        <arxiv:primary_category xmlns:arxiv="http://arxiv.org/schemas/atom" term="primary-category" scheme="http://arxiv.org/schemas/atom"/>
+        <category term="first-category" scheme="http://arxiv.org/schemas/atom"/>
+        <category term="second-category" scheme="http://arxiv.org/schemas/atom"/>
+    </entry>

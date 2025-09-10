@@ -1,4 +1,4 @@
-# ArXiv Meta
+# ArXiv
 
 Module for interfacing with the arxiv.org metadata API.
 
@@ -10,21 +10,21 @@ Module for interfacing with the arxiv.org metadata API.
 ```go
 package main
 import (
-        "github.com/mikethicke/arxiv-go"
+        "github.com/Epistemic-Technology/arxiv/arxiv"
 )
 func main() {
-        params := meta.SearchParams{
+        params := arxiv.SearchParams{
                 Query: "all:electron",
         }
-        requester := meta.MakeRequester(arxivgo.DefaultConfig)
-        response, err := meta.Search(requester, params)
+        requester := arxiv.MakeRequester(arxiv.DefaultConfig)
+        response, err := arxiv.Search(requester, params)
         if err != nil {
                 panic(err)
         }
         for _, entry := range response.Entries {
              // Do something
         }
-        nextPage, err := meta.SearchNext(requester, response)
+        nextPage, err := arxiv.SearchNext(requester, response)
         // Do something
 }
 ```
