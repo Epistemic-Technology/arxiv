@@ -1,6 +1,7 @@
 package arxiv
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,51 +84,56 @@ func TestMakeGetQuery(t *testing.T) {
 }
 
 func TestGetRequestGetsOKResponseWithDefaultConfig(t *testing.T) {
+	client := NewClient()
+	ctx := context.Background()
 	params := SearchParams{
 		Query: "all:electron",
 	}
-	resp, err := DoGetRequest(*http.DefaultClient, DefaultConfig, params)
+	resp, err := DoGetRequest(ctx, client, params)
 	if err != nil {
-		t.Errorf("GetRequest(%v) = %v; want nil", params, err)
+		t.Errorf("DoGetRequest(%v) = %v; want nil", params, err)
 	}
 	if resp.StatusCode != 200 {
-		t.Errorf("GetRequest(%v) = %v; want 200", params, resp.StatusCode)
+		t.Errorf("DoGetRequest(%v) = %v; want 200", params, resp.StatusCode)
 	}
 }
 
 func TestPostRequestGetsOKResponseWithDefaultConfig(t *testing.T) {
+	client := NewClient(WithRequestMethod(RequestMethodPost))
+	ctx := context.Background()
 	params := SearchParams{
 		Query: "all:electron",
 	}
-	config := DefaultConfig
-	config.RequestMethod = POST
-	resp, err := DoPostRequest(*http.DefaultClient, config, params)
+	resp, err := DoPostRequest(ctx, client, params)
 	if err != nil {
-		t.Errorf("PostRequest(%v) = %v; want nil", params, err)
+		t.Errorf("DoPostRequest(%v) = %v; want nil", params, err)
 	}
 	if resp.StatusCode != 200 {
-		t.Errorf("PostRequest(%v) = %v; want 200", params, resp.StatusCode)
+		t.Errorf("DoPostRequest(%v) = %v; want 200", params, resp.StatusCode)
 	}
 }
 
 func TestSearchWorksWithDefaultConfig(t *testing.T) {
-	requester := MakeRequester(DefaultConfig)
+	client := NewClient()
+	ctx := context.Background()
 	params := SearchParams{
 		Query: "all:electron",
 	}
-	_, err := Search(requester, params)
+	_, err := client.Search(ctx, params)
 	if err != nil {
 		t.Errorf("Search(%v) = %v; want nil", params, err)
 	}
 }
 
 func TestSearchIteratesOverMultiplePages(t *testing.T) {
-	requester := MakeRequester(DefaultConfig)
+	client := NewClient()
+	ctx := context.Background()
 	params := SearchParams{
-		Query: "all:electron",
+		Query:      "all:electron",
+		MaxResults: 10,
 	}
 	count := 0
-	for result := range SearchIter(requester, params) {
+	for result := range client.SearchIter(ctx, params) {
 		if result.ID == "" {
 			t.Errorf("SearchIter() = %v; want non-empty string", result.ID)
 		}
@@ -242,34 +248,118 @@ func TestParseSingleEntry(t *testing.T) {
 }
 
 func TestRateLimit(t *testing.T) {
-	config := DefaultConfig
-	config.RateLimit = true
-	config.RateLimitSeconds = 1
-
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <opensearch:totalResults>0</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <opensearch:itemsPerPage>0</opensearch:itemsPerPage>
+</feed>`))
 	}))
-	mockClient := mockServer.Client()
+	defer mockServer.Close()
 
-	requester := MakeRequesterWithClient(*mockClient, config)
+	client := NewClient(
+		WithBaseURL(mockServer.URL),
+		WithRateLimit(1*time.Second),
+		WithHTTPClient(mockServer.Client()),
+	)
 
+	ctx := context.Background()
 	params := SearchParams{
 		Query: "all:electron",
 	}
+
 	start := time.Now()
 	iterations := 5
 	for i := 0; i < iterations; i++ {
-		_, err := Search(requester, params)
+		_, err := client.Search(ctx, params)
 		if err != nil {
 			t.Fatalf("Search() = %v; want nil", err)
 		}
 	}
 	elapsed := time.Since(start)
-	minSeconds := config.RateLimitSeconds * (iterations - 1)
+	minSeconds := 1 * (iterations - 1)
 	if elapsed < time.Duration(minSeconds)*time.Second {
 		t.Errorf("Rate limit is not working: elapsed time = %v; want at least %v seconds", elapsed, minSeconds)
 	}
+}
 
-	// Close the mock server
-	mockServer.Close()
+func TestSearchNext(t *testing.T) {
+	client := NewClient()
+	ctx := context.Background()
+	params := SearchParams{
+		Query:      "all:electron",
+		MaxResults: 10,
+	}
+
+	response, err := client.Search(ctx, params)
+	if err != nil {
+		t.Fatalf("Search() = %v; want nil", err)
+	}
+
+	if SearchHasMoreResults(response) {
+		nextResponse, err := client.SearchNext(ctx, response)
+		if err != nil {
+			t.Errorf("SearchNext() = %v; want nil", err)
+		}
+		if nextResponse.StartIndex != response.StartIndex+response.ItemsPerPage {
+			t.Errorf("SearchNext().StartIndex = %v; want %v", nextResponse.StartIndex, response.StartIndex+response.ItemsPerPage)
+		}
+	}
+}
+
+func TestSearchPrevious(t *testing.T) {
+	client := NewClient()
+	ctx := context.Background()
+	params := SearchParams{
+		Query:      "all:electron",
+		Start:      20,
+		MaxResults: 10,
+	}
+
+	response, err := client.Search(ctx, params)
+	if err != nil {
+		t.Fatalf("Search() = %v; want nil", err)
+	}
+
+	if SearchHasPreviousResults(response) {
+		prevResponse, err := client.SearchPrevious(ctx, response)
+		if err != nil {
+			t.Errorf("SearchPrevious() = %v; want nil", err)
+		}
+		expectedStart := response.StartIndex - response.ItemsPerPage
+		if expectedStart < 0 {
+			expectedStart = 0
+		}
+		if prevResponse.StartIndex != expectedStart {
+			t.Errorf("SearchPrevious().StartIndex = %v; want %v", prevResponse.StartIndex, expectedStart)
+		}
+	}
+}
+
+func TestClientOptions(t *testing.T) {
+	customTimeout := 30 * time.Second
+	customRateLimit := 5 * time.Second
+	customBaseURL := "http://custom.url/api"
+
+	client := NewClient(
+		WithBaseURL(customBaseURL),
+		WithRequestMethod(RequestMethodPost),
+		WithTimeout(customTimeout),
+		WithRateLimit(customRateLimit),
+	)
+
+	if client.BaseURL != customBaseURL {
+		t.Errorf("Client.BaseURL = %v; want %v", client.BaseURL, customBaseURL)
+	}
+	if client.RequestMethod != RequestMethodPost {
+		t.Errorf("Client.RequestMethod = %v; want %v", client.RequestMethod, RequestMethodPost)
+	}
+	if client.Timeout != customTimeout {
+		t.Errorf("Client.Timeout = %v; want %v", client.Timeout, customTimeout)
+	}
+	if client.RateLimit != customRateLimit {
+		t.Errorf("Client.RateLimit = %v; want %v", client.RateLimit, customRateLimit)
+	}
 }

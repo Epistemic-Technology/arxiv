@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -21,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	params := arxiv.SearchParams{
-		Query:      *query,
+		Query:      arxiv.Query(*query),
 		IdList:     strings.Split(*idList, ","),
 		Start:      *start,
 		MaxResults: *maxResults,
@@ -29,8 +30,9 @@ func main() {
 		SortOrder:  arxiv.SortOrder(*sortOrder),
 	}
 
-	requester := arxiv.MakeRequester(arxiv.DefaultConfig)
-	response, err := arxiv.Search(requester, params)
+	client := arxiv.NewClient()
+	ctx := context.Background()
+	response, err := client.Search(ctx, params)
 	if err != nil {
 		fmt.Println("Error searching arXiv:", err)
 		return
