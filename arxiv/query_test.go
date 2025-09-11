@@ -1,6 +1,7 @@
 package arxiv
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -206,14 +207,7 @@ func TestSearchQuery_DateRanges(t *testing.T) {
 			},
 			expected: "submittedDate:[202301010000 TO 202312312359]",
 		},
-		{
-			name: "last updated date range",
-			builder: func() *SearchQuery {
-				return NewSearchQuery().
-					LastUpdatedBetween(start, end)
-			},
-			expected: "lastUpdatedDate:[202301010000 TO 202312312359]",
-		},
+
 		{
 			name: "query with date range",
 			builder: func() *SearchQuery {
@@ -417,4 +411,147 @@ func TestSearchQuery_NestedGroups(t *testing.T) {
 	if result != expected {
 		t.Errorf("Complex grouped query failed:\nexpected: %q\ngot:      %q", expected, result)
 	}
+}
+
+func TestParseArxivDate(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantTime time.Time
+		wantErr  bool
+	}{
+		{
+			name:     "valid date",
+			input:    "202401151430",
+			wantTime: time.Date(2024, 1, 15, 14, 30, 0, 0, time.UTC),
+			wantErr:  false,
+		},
+		{
+			name:     "midnight",
+			input:    "202312310000",
+			wantTime: time.Date(2023, 12, 31, 0, 0, 0, 0, time.UTC),
+			wantErr:  false,
+		},
+		{
+			name:    "invalid length",
+			input:   "20240115",
+			wantErr: true,
+		},
+		{
+			name:    "invalid format",
+			input:   "2024-01-15T14",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseArxivDate(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseArxivDate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && !got.Equal(tt.wantTime) {
+				t.Errorf("parseArxivDate() = %v, want %v", got, tt.wantTime)
+			}
+		})
+	}
+}
+
+func TestParseSearchQuery_SubmittedDate(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "submittedDate with range",
+			input:    "submittedDate:[202401010000 TO 202401311159]",
+			expected: "submittedDate:[202401010000 TO 202401311159]",
+		},
+		{
+			name:     "submittedDate with other fields",
+			input:    "ti:quantum AND submittedDate:[202301010000 TO 202312312359]",
+			expected: "ti:quantum AND submittedDate:[202301010000 TO 202312312359]",
+		},
+		{
+			name:     "submittedDate between categories",
+			input:    "cat:cs.LG submittedDate:[202401010000 TO 202401151200] AND ti:neural",
+			expected: "cat:cs.LG AND submittedDate:[202401010000 TO 202401151200] AND ti:neural",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := ParseSearchQuery(tt.input)
+			if err != nil {
+				t.Fatalf("ParseSearchQuery() error = %v", err)
+			}
+
+			result := q.String()
+			if result != tt.expected {
+				t.Errorf("ParseSearchQuery() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseSearchQuery_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:    "unknown field",
+			input:   "xyz:value",
+			wantErr: "unknown field: xyz",
+		},
+		{
+			name:    "invalid date format in submittedDate",
+			input:   "submittedDate:[2024-01-01 TO 2024-12-31]",
+			wantErr: "invalid date format",
+		},
+		{
+			name:    "incomplete date range",
+			input:   "submittedDate:[202401010000]",
+			wantErr: "invalid date range format",
+		},
+		{
+			name:    "missing TO in date range",
+			input:   "submittedDate:[202401010000 202412312359]",
+			wantErr: "invalid date range format",
+		},
+		{
+			name:    "malformed date in range",
+			input:   "submittedDate:[20240101 TO 202412312359]",
+			wantErr: "invalid date format",
+		},
+		{
+			name:    "invalid URL encoding",
+			input:   "ti:%ZZ%GG",
+			wantErr: "invalid URL encoding",
+		},
+		{
+			name:    "unsupported field prefix",
+			input:   "unknown:search term",
+			wantErr: "unknown field: unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseSearchQuery(tt.input)
+			if err == nil {
+				t.Fatalf("ParseSearchQuery(%q) expected error containing %q, got nil", tt.input, tt.wantErr)
+			}
+			if !contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseSearchQuery(%q) error = %v, want error containing %q", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

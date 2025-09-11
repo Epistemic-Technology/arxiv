@@ -276,15 +276,7 @@ func TestSearchQueryIntegration_DateRanges(t *testing.T) {
 			},
 			description: "Papers in cs.LG submitted in the last year",
 		},
-		{
-			name: "last updated date range",
-			queryBuilder: func() *SearchQuery {
-				return NewSearchQuery().
-					Category("cs.AI").
-					LastUpdatedBetween(start, end)
-			},
-			description: "Papers in cs.AI updated in the last year",
-		},
+
 		{
 			name: "complex query with date range",
 			queryBuilder: func() *SearchQuery {

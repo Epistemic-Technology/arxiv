@@ -18,13 +18,14 @@ const (
 type queryField string
 
 const (
-	fieldTitle    queryField = "ti"
-	fieldAbstract queryField = "abs"
-	fieldAuthor   queryField = "au"
-	fieldCategory queryField = "cat"
-	fieldComment  queryField = "co"
-	fieldJournal  queryField = "jr"
-	fieldAll      queryField = "all"
+	fieldTitle         queryField = "ti"
+	fieldAbstract      queryField = "abs"
+	fieldAuthor        queryField = "au"
+	fieldCategory      queryField = "cat"
+	fieldComment       queryField = "co"
+	fieldJournal       queryField = "jr"
+	fieldAll           queryField = "all"
+	fieldSubmittedDate queryField = "submittedDate"
 )
 
 type queryNode interface {
@@ -62,7 +63,7 @@ func (o *operatorNode) encode() string {
 }
 
 type dateRangeQuery struct {
-	field     string
+	field     queryField
 	startDate time.Time
 	endDate   time.Time
 }
@@ -168,20 +169,7 @@ func (q *SearchQuery) SubmittedBetween(start, end time.Time) *SearchQuery {
 		q.nodes = append(q.nodes, &operatorNode{op: opAnd})
 	}
 	q.nodes = append(q.nodes, &dateRangeQuery{
-		field:     "submittedDate",
-		startDate: start,
-		endDate:   end,
-	})
-	return q
-}
-
-// LastUpdatedBetween adds a date range query for last update date.
-func (q *SearchQuery) LastUpdatedBetween(start, end time.Time) *SearchQuery {
-	if len(q.nodes) > 0 {
-		q.nodes = append(q.nodes, &operatorNode{op: opAnd})
-	}
-	q.nodes = append(q.nodes, &dateRangeQuery{
-		field:     "lastUpdatedDate",
+		field:     fieldSubmittedDate,
 		startDate: start,
 		endDate:   end,
 	})
@@ -198,27 +186,22 @@ func (q *SearchQuery) String() string {
 }
 
 // ParseSearchQuery parses a search query string into a SearchQuery.
-// This is a basic implementation that handles simple cases.
+// The query string should not use special characters such as + for
+// spaces or % encoded characters.
 func ParseSearchQuery(query string) (*SearchQuery, error) {
 	q := NewSearchQuery()
 	if query == "" {
 		return q, nil
 	}
 
-	// This is a simplified parser. A full implementation would need
-	// a proper tokenizer and parser to handle all cases correctly.
-	// For now, we'll handle basic field:value patterns and operators.
-
 	tokens := tokenizeQuery(query)
-	for i := range len(tokens) {
-		token := tokens[i]
-
-		switch strings.ToUpper(token) {
-		case "AND":
+	for i, token := range tokens {
+		switch queryOperator(strings.ToUpper(token)) {
+		case opAnd:
 			q.And()
-		case "OR":
+		case opOr:
 			q.Or()
-		case "ANDNOT":
+		case opAndNot:
 			q.AndNot()
 		default:
 			// Check if it's a field:value pattern
@@ -226,28 +209,52 @@ func ParseSearchQuery(query string) (*SearchQuery, error) {
 				parts := strings.SplitN(token, ":", 2)
 				if len(parts) == 2 {
 					field := parts[0]
-					value, _ := url.QueryUnescape(parts[1])
+					value, err := url.QueryUnescape(parts[1])
+					if err != nil {
+						return nil, fmt.Errorf("invalid URL encoding: %w", err)
+					}
 
-					switch field {
-					case "ti":
+					switch queryField(field) {
+					case fieldTitle:
 						q.Title(value)
-					case "abs":
+					case fieldAbstract:
 						q.Abstract(value)
-					case "au":
+					case fieldAuthor:
 						q.Author(value)
-					case "cat":
+					case fieldCategory:
 						q.Category(value)
-					case "co":
+					case fieldComment:
 						q.Comment(value)
-					case "jr":
+					case fieldJournal:
 						q.Journal(value)
-					case "all":
+					case fieldAll:
 						q.All(value)
-					case "submittedDate", "lastUpdatedDate":
-						// Date range parsing would go here
-						// For now, we'll skip complex date parsing
+					case fieldSubmittedDate:
+						// Parse date range format: [YYYYMMDDTTTT TO YYYYMMDDTTTT]
+						if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+							dateStr := strings.Trim(value, "[]")
+							parts := strings.Split(dateStr, " TO ")
+							if len(parts) == 2 {
+								startDate, err1 := parseArxivDate(parts[0])
+								endDate, err2 := parseArxivDate(parts[1])
+								if err1 == nil && err2 == nil {
+									if i > 0 && !isOperator(tokens[i-1]) {
+										q.And()
+									}
+									q.nodes = append(q.nodes, &dateRangeQuery{
+										field:     fieldSubmittedDate,
+										startDate: startDate,
+										endDate:   endDate,
+									})
+								} else {
+									return nil, fmt.Errorf("invalid date format: %s", value)
+								}
+							} else {
+								return nil, fmt.Errorf("invalid date range format: %s", value)
+							}
+						}
 					default:
-						// Unknown field, add as-is
+						return nil, fmt.Errorf("unknown field: %s", field)
 					}
 				}
 			}
@@ -257,14 +264,40 @@ func ParseSearchQuery(query string) (*SearchQuery, error) {
 	return q, nil
 }
 
+// IsValidSearchQuery checks if a search query is valid.
+func IsValidSearchQuery(query string) bool {
+	_, err := ParseSearchQuery(query)
+	return err == nil
+}
+
+// parseArxivDate parses a date in arXiv format (YYYYMMDDTTTT) to time.Time.
+// The format is YYYYMMDDTTTT where TTTT is 24-hour time to the minute in GMT.
+func parseArxivDate(dateStr string) (time.Time, error) {
+	if len(dateStr) != 12 {
+		return time.Time{}, fmt.Errorf("invalid date format: %s", dateStr)
+	}
+
+	year := dateStr[0:4]
+	month := dateStr[4:6]
+	day := dateStr[6:8]
+	hour := dateStr[8:10]
+	minute := dateStr[10:12]
+
+	// Format for time.Parse: "2006-01-02 15:04"
+	formatted := fmt.Sprintf("%s-%s-%s %s:%s", year, month, day, hour, minute)
+	return time.Parse("2006-01-02 15:04", formatted)
+}
+
 // tokenizeQuery splits a query string into tokens.
 func tokenizeQuery(query string) []string {
 	var tokens []string
 	var current strings.Builder
 	inParens := 0
 	inBrackets := false
+	inFieldValue := false
 
 	for i := 0; i < len(query); i++ {
+
 		ch := query[i]
 
 		switch ch {
@@ -286,9 +319,36 @@ func tokenizeQuery(query string) []string {
 		case ']':
 			inBrackets = false
 			current.WriteByte(ch)
+		case ':':
+			// When we see a colon, we're entering a field value
+			current.WriteByte(ch)
+			if !inBrackets && !inFieldValue {
+				inFieldValue = true
+			}
 		case ' ':
 			if inParens > 0 || inBrackets {
 				current.WriteByte(ch)
+			} else if inFieldValue {
+				// Check if the next word is an operator
+				nextWord := getNextWord(query, i+1)
+				if isOperator(nextWord) {
+					// End the field value
+					if current.Len() > 0 {
+						tokens = append(tokens, current.String())
+						current.Reset()
+					}
+					inFieldValue = false
+				} else if strings.Contains(nextWord, ":") {
+					// Next token is another field
+					if current.Len() > 0 {
+						tokens = append(tokens, current.String())
+						current.Reset()
+					}
+					inFieldValue = false
+				} else {
+					// Continue the field value
+					current.WriteByte(ch)
+				}
 			} else if current.Len() > 0 {
 				tokens = append(tokens, current.String())
 				current.Reset()
@@ -303,4 +363,28 @@ func tokenizeQuery(query string) []string {
 	}
 
 	return tokens
+}
+
+// getNextWord gets the next word starting from position i in the string
+func getNextWord(s string, i int) string {
+	// Skip leading spaces
+	for i < len(s) && s[i] == ' ' {
+		i++
+	}
+
+	start := i
+	for i < len(s) && s[i] != ' ' && s[i] != '(' && s[i] != ')' {
+		i++
+	}
+
+	if start < len(s) {
+		return s[start:i]
+	}
+	return ""
+}
+
+// isOperator checks if a word is a boolean operator
+func isOperator(word string) bool {
+	op := queryOperator(strings.ToUpper(word))
+	return op == opAnd || op == opOr || op == opAndNot
 }
