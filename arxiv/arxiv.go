@@ -1,29 +1,50 @@
-// Package arxiv provides a simple interface to the arXiv metadata API.
+// Package arxiv provides a client interface to the arXiv metadata API.
 //
 // [ArXiv] provides a public API for accessing metadata of scientific papers.
 // Documentation for the API can be found in the [ArXiv API User Manual].
 //
 // Basic usage:
 //
-//	   package main
-//	   import (
-//	         "github.com/mikethicke/arxiv-go"
-//	   )
-//	   func main() {
-//	         params := meta.SearchParams{
-//	                 Query: "all:electron",
-//	         }
-//	         requester := meta.MakeRequester(arxivgo.DefaultConfig)
-//	         response, err := meta.Search(requester, params)
-//	         if err != nil {
-//	                 panic(err)
-//	         }
-//	         for _, entry := range response.Entries {
-//					  // Do something
-//	         }
-//	         nextPage, err := meta.SearchNext(requester, response)
-//	         // Do something
-//	    }
+//	package main
+//
+//	import (
+//		"context"
+//		"fmt"
+//		"time"
+//
+//		"github.com/Epistemic-Technology/arxiv/arxiv"
+//	)
+//
+//	func main() {
+//		// Create a client with optional configuration
+//		client := arxiv.NewClient(
+//			arxiv.WithTimeout(30 * time.Second),
+//			arxiv.WithRateLimit(3 * time.Second),
+//		)
+//
+//		// Search using the client
+//		ctx := context.Background()
+//		params := arxiv.SearchParams{
+//			Query:      "all:electron",
+//			MaxResults: 10,
+//		}
+//
+//		response, err := client.Search(ctx, params)
+//		if err != nil {
+//			panic(err)
+//		}
+//
+//		for _, entry := range response.Entries {
+//			fmt.Printf("Title: %s\n", entry.Title)
+//		}
+//
+//		// Get next page of results
+//		nextPage, err := client.SearchNext(ctx, response)
+//		if err != nil {
+//			// Handle end of results or error
+//		}
+//		_ = nextPage
+//	}
 //
 // [ArXiv]: https://arxiv.org/
 // [ArXiv API User Manual]: https://info.arxiv.org/help/api/user-manual.html
@@ -117,8 +138,8 @@ func WithRateLimiter(rateLimiter *rate.Limiter) ClientOption {
 	}
 }
 
-// Request method for making API search requests. ArXiv's API supports GET or POST
-// requests for search queries.
+// RequestMethod specifies the HTTP method for API requests. ArXiv's API supports
+// both GET and POST methods for search queries.
 type RequestMethod int
 
 const (
@@ -152,10 +173,10 @@ func (p SearchParams) Validate() error {
 	return nil
 }
 
-// Possible ways to sort search results.
+// SortBy specifies how to sort search results.
 type SortBy string
 
-// The search query.
+// Query represents a search query string for the arXiv API.
 type Query string
 
 const (
@@ -164,7 +185,7 @@ const (
 	SortBySubmittedDate   SortBy = "submittedDate"
 )
 
-// Possible sort orders for search results.
+// SortOrder specifies the ordering direction for sorted search results.
 type SortOrder string
 
 const (
@@ -172,9 +193,9 @@ const (
 	SortOrderDescending SortOrder = "descending"
 )
 
-// SearchResponse contains metadata for search results returned by the arXiv API.
+// SearchResults contains metadata for search results returned by the arXiv API.
 // The Params field contains the parameters used to make the search request.
-type SearchResponse struct {
+type SearchResults struct {
 	Links        []Link          `xml:"link"`         // Links included in the response. Includes link for current search.
 	Title        string          `xml:"title"`        // Title of the search response, includes search query.
 	ID           string          `xml:"id"`           // ID of the search response, as a URL.
@@ -221,7 +242,8 @@ type Link struct {
 	Title string `xml:"title,attr"`
 }
 
-// RawSearch makes a search request to the arXiv API using the provided Requester.
+// RawSearch makes a search request to the arXiv API and returns the raw HTTP response.
+// The caller is responsible for closing the response body.
 func (c *Client) RawSearch(ctx context.Context, params SearchParams) (*http.Response, error) {
 	if err := params.Validate(); err != nil {
 		return nil, err
@@ -237,34 +259,34 @@ func (c *Client) RawSearch(ctx context.Context, params SearchParams) (*http.Resp
 	return DoPostRequest(ctx, c, params)
 }
 
-// Search makes a search request to the arXiv API using the provided Requester and parses the response.
-func (c *Client) Search(ctx context.Context, params SearchParams) (SearchResponse, error) {
+// Search makes a search request to the arXiv API and returns the parsed response.
+func (c *Client) Search(ctx context.Context, params SearchParams) (SearchResults, error) {
 	response, err := c.RawSearch(ctx, params)
 	if err != nil {
-		return SearchResponse{}, err
+		return SearchResults{}, err
 	}
 	defer response.Body.Close()
 	parsedResponse, err := ParseResponse(response.Body)
 	if err != nil {
-		return SearchResponse{}, err
+		return SearchResults{}, err
 	}
 	parsedResponse.Params = params
 	return parsedResponse, nil
 }
 
-// SearchNext searches for the next page of results using the provided Requester and SearchResponse.
-func (c *Client) SearchNext(ctx context.Context, response SearchResponse) (SearchResponse, error) {
+// SearchNext retrieves the next page of results based on the current SearchResponse.
+func (c *Client) SearchNext(ctx context.Context, response SearchResults) (SearchResults, error) {
 	if !SearchHasMoreResults(response) {
-		return SearchResponse{}, errors.New("no more results")
+		return SearchResults{}, errors.New("no more results")
 	}
 	response.Params.Start = response.StartIndex + response.ItemsPerPage
 	return c.Search(ctx, response.Params)
 }
 
-// SearchPrevious searches for the previous page of results using the provided Requester and SearchResponse.
-func (c *Client) SearchPrevious(ctx context.Context, response SearchResponse) (SearchResponse, error) {
+// SearchPrevious retrieves the previous page of results based on the current SearchResponse.
+func (c *Client) SearchPrevious(ctx context.Context, response SearchResults) (SearchResults, error) {
 	if !SearchHasPreviousResults(response) {
-		return SearchResponse{}, errors.New("no more results")
+		return SearchResults{}, errors.New("no more results")
 	}
 	response.Params.Start = response.StartIndex - response.ItemsPerPage
 	if response.Params.Start < 0 {
@@ -273,7 +295,8 @@ func (c *Client) SearchPrevious(ctx context.Context, response SearchResponse) (S
 	return c.Search(ctx, response.Params)
 }
 
-// Returns an iterator over the search results. The iterator will make multiple requests to the API as needed.
+// SearchIter returns an iterator over search results, automatically handling pagination.
+// The iterator will make multiple API requests as needed to retrieve all results.
 func (c *Client) SearchIter(ctx context.Context, params SearchParams) iter.Seq[EntryMetadata] {
 	return func(yield func(EntryMetadata) bool) {
 		for {
@@ -295,16 +318,16 @@ func (c *Client) SearchIter(ctx context.Context, params SearchParams) iter.Seq[E
 }
 
 // SearchHasMoreResults returns true if there are more results available for the search query.
-func SearchHasMoreResults(response SearchResponse) bool {
+func SearchHasMoreResults(response SearchResults) bool {
 	return response.TotalResults > 0 && response.StartIndex+response.ItemsPerPage < response.TotalResults
 }
 
 // SearchHasPreviousResults returns true if there are previous results available for the search query.
-func SearchHasPreviousResults(response SearchResponse) bool {
+func SearchHasPreviousResults(response SearchResults) bool {
 	return response.TotalResults > 0 && response.StartIndex > 0
 }
 
-// DoGetRequest makes a GET request to the arXiv API. It is normally called by the Requester.
+// DoGetRequest performs a GET request to the arXiv API with the specified parameters.
 func DoGetRequest(ctx context.Context, client *Client, params SearchParams) (*http.Response, error) {
 	queryString := makeGetQuery(params)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, client.BaseURL+"?"+queryString, nil)
@@ -318,7 +341,7 @@ func DoGetRequest(ctx context.Context, client *Client, params SearchParams) (*ht
 	return response, nil
 }
 
-// DoPostRequest makes a POST request to the arXiv API. It is normally called by the Requester.
+// DoPostRequest performs a POST request to the arXiv API with the specified parameters.
 func DoPostRequest(ctx context.Context, client *Client, params SearchParams) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL, nil)
 	if err != nil {
@@ -351,12 +374,12 @@ func DoPostRequest(ctx context.Context, client *Client, params SearchParams) (*h
 }
 
 // ParseResponse parses a search response from the arXiv API.
-func ParseResponse(responseData io.Reader) (SearchResponse, error) {
+func ParseResponse(responseData io.Reader) (SearchResults, error) {
 	decoder := xml.NewDecoder(responseData)
-	var searchResponse SearchResponse
+	var searchResponse SearchResults
 	err := decoder.Decode(&searchResponse)
 	if err != nil {
-		return SearchResponse{}, err
+		return SearchResults{}, err
 	}
 	return searchResponse, nil
 }
