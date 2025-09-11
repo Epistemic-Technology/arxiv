@@ -76,11 +76,13 @@ import (
 
 // Client represents an arXiv API client.
 type Client struct {
-	BaseURL       string        // Base URL for the arXiv API
-	RequestMethod RequestMethod // HTTP request method to use
-	Timeout       time.Duration // Timeout for the HTTP request
-	RateLimit     time.Duration // How long to wait between requests
-	RetryConfig   *RetryConfig  // Configuration for retry
+	BaseURL       string         // Base URL for the arXiv API
+	RequestMethod RequestMethod  // HTTP request method to use
+	Timeout       time.Duration  // Timeout for the HTTP request
+	RateLimit     time.Duration  // How long to wait between requests
+	RetryConfig   *RetryConfig   // Configuration for retry
+	requestHooks  []RequestHook  // Hooks called before requests
+	responseHooks []ResponseHook // Hooks called after responses
 	httpClient    *http.Client
 	rateLimiter   *rate.Limiter
 }
@@ -94,6 +96,18 @@ type RetryConfig struct {
 }
 
 type ClientOption func(*Client)
+
+// RequestHook is called before making an API request.
+// It receives the client instance and a pointer to the search parameters, allowing hooks to:
+// - Inspect client configuration
+// - Modify search parameters before the request
+// - Add logging, metrics collection, or other middleware behavior
+type RequestHook func(ctx context.Context, client *Client, method string, params *SearchParams)
+
+// ResponseHook is called after receiving an API response.
+// It receives the client instance, the response (if successful), request duration, and any error that occurred.
+// The response will be nil if an error occurred during the request.
+type ResponseHook func(ctx context.Context, client *Client, method string, response *SearchResults, duration time.Duration, err error)
 
 // NewClient creates a new arXiv API client with the given options.
 func NewClient(options ...ClientOption) *Client {
@@ -190,6 +204,47 @@ func WithDefaultRetry() ClientOption {
 			MaxInterval:     30 * time.Second,
 			Multiplier:      2.0,
 		}
+	}
+}
+
+// WithRequestHook adds a hook that will be called before each API request.
+// Multiple hooks can be added and will be called in the order they were added.
+// The hook receives a pointer to the search parameters, allowing modification before the request.
+// Example usage:
+//
+//	client := arxiv.NewClient(
+//		arxiv.WithRequestHook(func(ctx context.Context, client *arxiv.Client, method string, params *arxiv.SearchParams) {
+//			// Log the request
+//			log.Printf("Making %s request with query: %s", method, params.Query)
+//			// Modify parameters if needed
+//			if params.MaxResults == 0 {
+//				params.MaxResults = 10  // Set default
+//			}
+//		}),
+//	)
+func WithRequestHook(hook RequestHook) ClientOption {
+	return func(c *Client) {
+		c.requestHooks = append(c.requestHooks, hook)
+	}
+}
+
+// WithResponseHook adds a hook that will be called after each API response.
+// Multiple hooks can be added and will be called in the order they were added.
+// The hook receives the client instance, the response (nil on error), request duration and any error that occurred.
+// Example usage:
+//
+//	client := arxiv.NewClient(
+//		arxiv.WithResponseHook(func(ctx context.Context, client *arxiv.Client, method string, response *arxiv.SearchResults, duration time.Duration, err error) {
+//			if err != nil {
+//				log.Printf("%s request to %s failed after %v: %v", method, client.BaseURL, duration, err)
+//			} else {
+//				log.Printf("%s request completed in %v with %d results", method, duration, response.TotalResults)
+//			}
+//		}),
+//	)
+func WithResponseHook(hook ResponseHook) ClientOption {
+	return func(c *Client) {
+		c.responseHooks = append(c.responseHooks, hook)
 	}
 }
 
@@ -419,16 +474,36 @@ func (c *Client) RawSearch(ctx context.Context, params SearchParams) (*http.Resp
 
 // Search makes a search request to the arXiv API and returns the parsed response.
 func (c *Client) Search(ctx context.Context, params SearchParams) (SearchResults, error) {
+	for _, hook := range c.requestHooks {
+		hook(ctx, c, "Search", &params)
+	}
+
+	startTime := time.Now()
+
 	response, err := c.RawSearch(ctx, params)
+
+	duration := time.Since(startTime)
+
 	if err != nil {
+		for _, hook := range c.responseHooks {
+			hook(ctx, c, "Search", nil, duration, err)
+		}
 		return SearchResults{}, err
 	}
 	defer response.Body.Close()
 	parsedResponse, err := ParseResponse(response.Body)
 	if err != nil {
+		for _, hook := range c.responseHooks {
+			hook(ctx, c, "Search", nil, time.Since(startTime), err)
+		}
 		return SearchResults{}, err
 	}
 	parsedResponse.Params = params
+
+	for _, hook := range c.responseHooks {
+		hook(ctx, c, "Search", &parsedResponse, time.Since(startTime), nil)
+	}
+
 	return parsedResponse, nil
 }
 
