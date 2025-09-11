@@ -173,6 +173,28 @@ func TestParseResponse(t *testing.T) {
 		t.Errorf("ParseResponse().Entries = %v; want 10", len(parsedResponse.Entries))
 	}
 
+	// Test that AbstractUrl and PDFUrl are properly populated
+	firstEntry := parsedResponse.Entries[0]
+	expectedAbstractUrl := "http://arxiv.org/abs/cond-mat/0102536v1"
+	expectedPDFUrl := "http://arxiv.org/pdf/cond-mat/0102536v1"
+
+	if firstEntry.AbstractUrl != expectedAbstractUrl {
+		t.Errorf("ParseResponse().Entries[0].AbstractUrl = %v; want %v", firstEntry.AbstractUrl, expectedAbstractUrl)
+	}
+	if firstEntry.PDFUrl != expectedPDFUrl {
+		t.Errorf("ParseResponse().Entries[0].PDFUrl = %v; want %v", firstEntry.PDFUrl, expectedPDFUrl)
+	}
+
+	// Test that all entries have both URLs populated
+	for i, entry := range parsedResponse.Entries {
+		if entry.AbstractUrl == "" {
+			t.Errorf("ParseResponse().Entries[%d].AbstractUrl is empty", i)
+		}
+		if entry.PDFUrl == "" {
+			t.Errorf("ParseResponse().Entries[%d].PDFUrl is empty", i)
+		}
+	}
+
 }
 
 func TestParseSingleEntry(t *testing.T) {

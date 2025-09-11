@@ -306,6 +306,8 @@ type EntryMetadata struct {
 	Comment          string     `xml:"comment"`          // Comment on the entry. Includes information such as where the paper was submitted or number of pages, figures, etc.
 	JournalReference string     `xml:"journal_ref"`      // Journal reference for the entry.
 	DOI              string     `xml:"doi"`              // Digital Object Identifier (DOI) for the entry.
+	AbstractUrl      string     // URL of the abstract associated with the entry.
+	PDFUrl           string     // URL of the PDF file associated with the entry.
 }
 
 // Author contains information about an author of a paper.
@@ -589,6 +591,16 @@ func ParseResponse(responseData io.Reader) (SearchResults, error) {
 	err := decoder.Decode(&searchResponse)
 	if err != nil {
 		return SearchResults{}, err
+	}
+	for i := range searchResponse.Entries {
+		for _, link := range searchResponse.Entries[i].Links {
+			if link.Rel == "alternate" {
+				searchResponse.Entries[i].AbstractUrl = link.Href
+			}
+			if link.Rel == "related" && link.Title == "pdf" {
+				searchResponse.Entries[i].PDFUrl = link.Href
+			}
+		}
 	}
 	return searchResponse, nil
 }
