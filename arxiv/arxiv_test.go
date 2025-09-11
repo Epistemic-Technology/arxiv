@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 func TestMakeGetQuery(t *testing.T) {
@@ -362,4 +364,172 @@ func TestClientOptions(t *testing.T) {
 	if client.RateLimit != customRateLimit {
 		t.Errorf("Client.RateLimit = %v; want %v", client.RateLimit, customRateLimit)
 	}
+}
+
+func TestWithDefaultRetry(t *testing.T) {
+	client := NewClient(WithDefaultRetry())
+
+	if client.RetryConfig == nil {
+		t.Fatal("RetryConfig should not be nil when WithDefaultRetry is used")
+	}
+
+	// Check default values
+	if client.RetryConfig.MaxAttempts != 3 {
+		t.Errorf("Default MaxAttempts = %d; want 3", client.RetryConfig.MaxAttempts)
+	}
+	if client.RetryConfig.InitialInterval != 1*time.Second {
+		t.Errorf("Default InitialInterval = %v; want 1s", client.RetryConfig.InitialInterval)
+	}
+	if client.RetryConfig.MaxInterval != 30*time.Second {
+		t.Errorf("Default MaxInterval = %v; want 30s", client.RetryConfig.MaxInterval)
+	}
+	if client.RetryConfig.Multiplier != 2.0 {
+		t.Errorf("Default Multiplier = %v; want 2.0", client.RetryConfig.Multiplier)
+	}
+}
+
+func TestWithRateLimiter(t *testing.T) {
+	// Test that WithRateLimiter option is accepted without error
+	// We can't directly access the private rateLimiter field, but we can
+	// verify the option works by using the client
+	customLimiter := rate.NewLimiter(rate.Every(1*time.Second), 1)
+
+	// This should not panic
+	client := NewClient(WithRateLimiter(customLimiter))
+
+	// Verify client was created successfully
+	if client == nil {
+		t.Error("Client should not be nil")
+	}
+
+	// Test that multiple rate options can be provided (last one wins)
+	client2 := NewClient(
+		WithRateLimit(5*time.Second),
+		WithRateLimiter(customLimiter),
+	)
+
+	if client2 == nil {
+		t.Error("Client with multiple rate options should not be nil")
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  SearchParams
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid query",
+			params: SearchParams{
+				Query: "test",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid id list",
+			params: SearchParams{
+				IdList: []string{"1234.5678"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "both query and id list",
+			params: SearchParams{
+				Query:  "test",
+				IdList: []string{"1234.5678"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "maxResults exceeds 2000",
+			params: SearchParams{
+				Query:      "test",
+				MaxResults: 2001,
+			},
+			wantErr: true,
+			errMsg:  "maxResults cannot exceed 2000",
+		},
+		{
+			name: "start exceeds 30000",
+			params: SearchParams{
+				Query: "test",
+				Start: 30001,
+			},
+			wantErr: true,
+			errMsg:  "start cannot exceed 30000",
+		},
+		{
+			name:    "empty params are valid",
+			params:  SearchParams{},
+			wantErr: false, // The current implementation doesn't validate empty params
+		},
+		{
+			name: "negative values are allowed",
+			params: SearchParams{
+				Query:      "test",
+				Start:      -1,
+				MaxResults: -1,
+			},
+			wantErr: false, // The current implementation doesn't check for negative values
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.params.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.errMsg != "" {
+				if err.Error() != tt.errMsg {
+					t.Errorf("Validate() error = %v, want %v", err.Error(), tt.errMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestSearchWithValidation(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Should not reach here if validation fails
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <opensearch:totalResults>0</opensearch:totalResults>
+</feed>`))
+	}))
+	defer mockServer.Close()
+
+	client := NewClient(
+		WithBaseURL(mockServer.URL),
+		WithHTTPClient(mockServer.Client()),
+	)
+	ctx := context.Background()
+
+	// Test with params that exceed limits
+	t.Run("maxResults exceeds limit", func(t *testing.T) {
+		params := SearchParams{
+			Query:      "test",
+			MaxResults: 2001,
+		}
+
+		_, err := client.Search(ctx, params)
+		if err == nil {
+			t.Error("Expected validation error for maxResults > 2000")
+		}
+	})
+
+	t.Run("start exceeds limit", func(t *testing.T) {
+		params := SearchParams{
+			Query: "test",
+			Start: 30001,
+		}
+
+		_, err := client.Search(ctx, params)
+		if err == nil {
+			t.Error("Expected validation error for start > 30000")
+		}
+	})
 }

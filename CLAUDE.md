@@ -23,6 +23,7 @@ This is a Go library that provides a client interface to the arXiv.org metadata 
   - Iterator pattern for large result sets (using Go 1.23's `iter.Seq`)
   - Context support for cancellation and timeouts
   - Automatic retry with exponential backoff for transient failures
+  - Interceptor pattern for extensibility (caching, logging, tracing, etc.)
 - **Retry Mechanism**:
   - **RetryConfig**: Configuration for retry behavior (MaxAttempts, InitialInterval, MaxInterval, Multiplier)
   - Automatically retries on temporary network errors and HTTP status codes: 408, 429, 500, 502, 503, 504
@@ -54,7 +55,7 @@ This is a Go library that provides a client interface to the arXiv.org metadata 
 
 #### Data Types
 - **SearchParams**: Configures search requests (Query, IdList, Start, MaxResults, SortBy, SortOrder)
-- **SearchResponse**: Contains parsed results with metadata
+- **SearchResults**: Contains parsed results with metadata (renamed from SearchResponse)
 - **EntryMetadata**: Individual paper data (Title, Authors, Abstract, Categories, Links, DOI, etc.)
 - **RequestMethod**: Typed constant for GET/POST
 - **SortBy**: Typed constants (SortByRelevance, SortByLastUpdatedDate, SortBySubmittedDate)
@@ -67,11 +68,12 @@ This is a Go library that provides a client interface to the arXiv.org metadata 
 - Uses context for proper request handling
 
 ### Testing
-- **Unit Tests** (`arxiv_test.go`, `query_test.go`, `retry_test.go`):
+- **Unit Tests** (`arxiv_test.go`, `query_test.go`, `retry_test.go`, `interceptor_test.go`):
   - Tests with mock data in `arxiv/test_data/`
   - Query builder tests for all operations
   - Parser tests for query strings
   - Retry mechanism tests with various failure scenarios
+  - Interceptor pattern tests for middleware functionality
 - **Integration Tests** (`query_integration_test.go`):
   - Real API calls to arXiv (skipped in short mode)
   - Tests for all query types and operators
@@ -137,6 +139,11 @@ go vet ./...
 go mod tidy
 ```
 
+## API Helper Functions
+
+- **SearchHasMoreResults(response SearchResults) bool**: Helper function to check if more results are available for pagination
+- **SearchNext(ctx, response) (SearchResults, error)**: Retrieves the next page of results based on the current SearchResults
+
 ## Important Implementation Notes
 
 1. **Client-based Architecture**: The library uses a `Client` struct with functional options pattern for configuration. Create a client with `NewClient()` and pass options like `WithTimeout()`, `WithRateLimit()`, `WithRetry()`, etc.
@@ -152,21 +159,28 @@ go mod tidy
    - Respects context cancellation during backoff periods
    - Default configuration available with `WithDefaultRetry()` (3 attempts, 1s initial interval)
 
-5. **Context Support**: All API methods accept a `context.Context` parameter for proper cancellation and timeout handling.
+5. **Interceptor Pattern**: The library uses interceptors for extensibility and cross-cutting concerns:
+   - Add caching, logging, tracing, metrics, or custom logic
+   - Chain multiple interceptors together
+   - Interceptors can modify parameters, short-circuit requests, handle errors, and measure timing
+   - Use `WithInterceptor()` option to add interceptors
 
-6. **Testing Strategy**: 
+6. **Context Support**: All API methods accept a `context.Context` parameter for proper cancellation and timeout handling.
+
+7. **Testing Strategy**: 
    - Unit tests use mock XML data to test parsing logic
+   - Interceptor tests verify interceptor functionality and chaining
    - Retry tests verify behavior under various failure scenarios
    - Integration tests verify real API behavior but respect rate limits
    - Use `-short` flag to skip integration tests during rapid development
 
-7. **Error Handling**: The library returns errors from all operations. Always check errors, especially for network operations. Parameter validation is performed before making requests.
+8. **Error Handling**: The library returns errors from all operations. Always check errors, especially for network operations. Parameter validation is performed before making requests.
 
-8. **Iterator Pattern**: The `SearchIter` method uses Go 1.23's iterator pattern (`iter.Seq`) for efficient processing of large result sets without loading all results into memory at once.
+9. **Iterator Pattern**: The `SearchIter` method uses Go 1.23's iterator pattern (`iter.Seq`) for efficient processing of large result sets without loading all results into memory at once.
 
-9. **XML Parsing**: Response parsing handles the Atom feed format returned by arXiv's API. Test data files in `arxiv/test_data/` show expected XML structure.
+10. **XML Parsing**: Response parsing handles the Atom feed format returned by arXiv's API. Test data files in `arxiv/test_data/` show expected XML structure.
 
-10. **Type Safety**: The library uses typed constants for `RequestMethod`, `SortBy`, and `SortOrder` to provide compile-time safety and better documentation.
+11. **Type Safety**: The library uses typed constants for `RequestMethod`, `SortBy`, and `SortOrder` to provide compile-time safety and better documentation.
 
 ## API Usage Examples
 
@@ -182,6 +196,10 @@ client := arxiv.NewClient(
         MaxInterval:     10 * time.Second,
         Multiplier:      2.0,
     }),
+    arxiv.WithInterceptor(
+        LoggingInterceptor(logger),
+        CachingInterceptor(cache, 5*time.Minute),
+    ),
 )
 
 // Simple search with parameters
@@ -231,6 +249,30 @@ for entry := range client.SearchIter(ctx, params) {
 }
 ```
 
+### Pagination with SearchNext
+```go
+// Get first page of results
+params := arxiv.SearchParams{
+    Query:      "machine learning",
+    MaxResults: 10,
+}
+
+firstPage, err := client.Search(ctx, params)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Check if more results are available
+if arxiv.SearchHasMoreResults(firstPage) {
+    // Get next page
+    nextPage, err := client.SearchNext(ctx, firstPage)
+    if err != nil {
+        log.Fatal(err)
+    }
+    // Process next page results
+}
+```
+
 ### Search by arXiv IDs
 ```go
 params := arxiv.SearchParams{
@@ -260,4 +302,55 @@ client := arxiv.NewClient(
 // - Temporary network errors
 // - HTTP 408, 429, 500, 502, 503, 504 status codes
 // - Context deadline exceeded (if context allows)
+```
+
+### Using Interceptors for Observability
+```go
+// Logging interceptor for observability
+func LoggingInterceptor(logger *log.Logger) arxiv.Interceptor {
+    return func(ctx context.Context, params arxiv.SearchParams, next arxiv.SearchFunc) (arxiv.SearchResults, error) {
+        start := time.Now()
+        
+        logger.Printf("Starting search with query: %s", params.Query)
+        
+        result, err := next(ctx, params)
+        duration := time.Since(start)
+        
+        if err != nil {
+            logger.Printf("Search failed after %v: %v", duration, err)
+        } else {
+            logger.Printf("Search completed in %v with %d results", duration, result.TotalResults)
+        }
+        
+        return result, err
+    }
+}
+
+// Usage
+client := arxiv.NewClient(
+    arxiv.WithInterceptor(LoggingInterceptor(logger)),
+)
+```
+
+### Caching Interceptor
+```go
+// Caching interceptor to reduce API calls
+func CachingInterceptor(cache Cache, ttl time.Duration) arxiv.Interceptor {
+    return func(ctx context.Context, params arxiv.SearchParams, next arxiv.SearchFunc) (arxiv.SearchResults, error) {
+        key := fmt.Sprintf("arxiv:%s:%d:%d", params.Query, params.Start, params.MaxResults)
+        
+        // Try cache first
+        if cached, found := cache.Get(key); found {
+            return cached.(arxiv.SearchResults), nil
+        }
+        
+        // Cache miss - call API
+        result, err := next(ctx, params)
+        if err == nil {
+            cache.Set(key, result, ttl)
+        }
+        
+        return result, err
+    }
+}
 ```
