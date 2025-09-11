@@ -144,8 +144,43 @@ client := arxiv.NewClient(
     arxiv.WithTimeout(30 * time.Second),
     arxiv.WithRateLimit(5 * time.Second), // Respect API rate limits
     arxiv.WithRequestMethod(arxiv.RequestMethodPOST),
+    arxiv.WithRetry(arxiv.RetryConfig{
+        MaxAttempts:     3,               // Retry up to 3 times
+        InitialInterval: 1 * time.Second, // Start with 1 second delay
+        MaxInterval:     10 * time.Second, // Cap backoff at 10 seconds
+        Multiplier:      2.0,              // Double the delay each time
+    }),
 )
 ```
+
+### Automatic Retry with Exponential Backoff
+
+The client supports automatic retry for transient failures:
+
+```go
+// Simple retry configuration with defaults
+client := arxiv.NewClient(
+    arxiv.WithRetry(arxiv.RetryConfig{
+        MaxAttempts: 3,
+    }),
+)
+
+// Or with custom backoff settings
+client := arxiv.NewClient(
+    arxiv.WithRetry(arxiv.RetryConfig{
+        MaxAttempts:     5,
+        InitialInterval: 500 * time.Millisecond,
+        MaxInterval:     30 * time.Second,
+        Multiplier:      1.5,
+    }),
+)
+```
+
+The retry mechanism:
+- Automatically retries on temporary network errors
+- Retries on HTTP status codes: 408, 429, 500, 502, 503, 504
+- Uses exponential backoff with jitter to prevent thundering herd
+- Respects context cancellation during backoff periods
 
 ### Pagination
 
@@ -220,6 +255,7 @@ query := arxiv.NewSearchQuery().
 
 - **Client-based architecture** with configurable options
 - **Rate limiting** to respect arXiv's API guidelines
+- **Automatic retry** with exponential backoff for transient failures
 - **Query builder** for constructing complex searches programmatically
 - **Iterator pattern** for efficient processing of large result sets
 - **Context support** for cancellation and timeouts

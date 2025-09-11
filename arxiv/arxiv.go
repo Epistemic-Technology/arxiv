@@ -20,6 +20,12 @@
 //		client := arxiv.NewClient(
 //			arxiv.WithTimeout(30 * time.Second),
 //			arxiv.WithRateLimit(3 * time.Second),
+//			arxiv.WithRetry(arxiv.RetryConfig{
+//				MaxAttempts:     3,
+//				InitialInterval: 1 * time.Second,
+//				MaxInterval:     10 * time.Second,
+//				Multiplier:      2.0,
+//			}),
 //		)
 //
 //		// Search using the client
@@ -57,6 +63,8 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -72,8 +80,17 @@ type Client struct {
 	RequestMethod RequestMethod // HTTP request method to use
 	Timeout       time.Duration // Timeout for the HTTP request
 	RateLimit     time.Duration // How long to wait between requests
+	RetryConfig   *RetryConfig  // Configuration for retry
 	httpClient    *http.Client
 	rateLimiter   *rate.Limiter
+}
+
+// RetryConfig configures retry behavior.
+type RetryConfig struct {
+	MaxAttempts     int           // Maximum number of retry attempts (0 = no retries)
+	InitialInterval time.Duration // Initial backoff interval
+	MaxInterval     time.Duration // Maximum backoff interval
+	Multiplier      float64       // Backoff multiplier (typically 2.0)
 }
 
 type ClientOption func(*Client)
@@ -135,6 +152,44 @@ func WithHTTPClient(httpClient *http.Client) ClientOption {
 func WithRateLimiter(rateLimiter *rate.Limiter) ClientOption {
 	return func(c *Client) {
 		c.rateLimiter = rateLimiter
+	}
+}
+
+// WithRetry configures automatic retry with exponential backoff for transient failures.
+// Common configurations:
+//   - For basic retry: WithRetry(RetryConfig{MaxAttempts: 3})
+//   - For custom backoff: WithRetry(RetryConfig{
+//     MaxAttempts: 5,
+//     InitialInterval: 1 * time.Second,
+//     MaxInterval: 30 * time.Second,
+//     Multiplier: 2.0,
+//     })
+func WithRetry(config RetryConfig) ClientOption {
+	return func(c *Client) {
+		// Set sensible defaults if not provided
+		if config.InitialInterval == 0 {
+			config.InitialInterval = 1 * time.Second
+		}
+		if config.MaxInterval == 0 {
+			config.MaxInterval = 30 * time.Second
+		}
+		if config.Multiplier == 0 {
+			config.Multiplier = 2.0
+		}
+		c.RetryConfig = &config
+	}
+}
+
+// WithDefaultRetry configures automatic retry with exponential backoff for transient failures.
+// Default settings are MaxAttempts: 3, InitialInterval: 1s, MaxInterval: 30s, Multiplier: 2.0.
+func WithDefaultRetry() ClientOption {
+	return func(c *Client) {
+		c.RetryConfig = &RetryConfig{
+			MaxAttempts:     3,
+			InitialInterval: 1 * time.Second,
+			MaxInterval:     30 * time.Second,
+			Multiplier:      2.0,
+		}
 	}
 }
 
@@ -242,21 +297,124 @@ type Link struct {
 	Title string `xml:"title,attr"`
 }
 
+// isRetryableError determines if an error is retryable.
+// Retryable errors include temporary network failures and specific HTTP status codes.
+func isRetryableError(err error, response *http.Response) bool {
+	if err != nil {
+		// Retry on timeout or temporary network errors
+		if errors.Is(err, context.DeadlineExceeded) {
+			return true
+		}
+		// Check for temporary network errors
+		if urlErr, ok := err.(*url.Error); ok && urlErr.Temporary() {
+			return true
+		}
+	}
+
+	if response != nil {
+		// Retry on specific HTTP status codes
+		switch response.StatusCode {
+		case http.StatusTooManyRequests, // 429
+			http.StatusRequestTimeout,      // 408
+			http.StatusInternalServerError, // 500
+			http.StatusBadGateway,          // 502
+			http.StatusServiceUnavailable,  // 503
+			http.StatusGatewayTimeout:      // 504
+			return true
+		}
+	}
+
+	return false
+}
+
+// calculateBackoff calculates the next backoff interval with jitter.
+func calculateBackoff(attempt int, config *RetryConfig) time.Duration {
+	if config == nil || attempt <= 0 {
+		return 0
+	}
+
+	// Calculate exponential backoff
+	backoff := float64(config.InitialInterval) * math.Pow(config.Multiplier, float64(attempt-1))
+
+	// Cap at max interval
+	if backoff > float64(config.MaxInterval) {
+		backoff = float64(config.MaxInterval)
+	}
+
+	// Add jitter (±10% randomization)
+	jitter := 0.1 * backoff * (2*rand.Float64() - 1)
+	backoff += jitter
+
+	return time.Duration(backoff)
+}
+
 // RawSearch makes a search request to the arXiv API and returns the raw HTTP response.
 // The caller is responsible for closing the response body.
+// If RetryConfig is set, the method will automatically retry on transient failures
 func (c *Client) RawSearch(ctx context.Context, params SearchParams) (*http.Response, error) {
 	if err := params.Validate(); err != nil {
 		return nil, err
 	}
-	if c.rateLimiter != nil {
-		if err := c.rateLimiter.Wait(ctx); err != nil {
-			return nil, err
+
+	// Determine max attempts
+	maxAttempts := 1
+	if c.RetryConfig != nil && c.RetryConfig.MaxAttempts > 0 {
+		maxAttempts = c.RetryConfig.MaxAttempts
+	}
+
+	var lastErr error
+	var lastResponse *http.Response
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Apply rate limiting
+		if c.rateLimiter != nil {
+			if err := c.rateLimiter.Wait(ctx); err != nil {
+				return nil, err
+			}
+		}
+
+		// Make the request
+		var response *http.Response
+		var err error
+		if c.RequestMethod == RequestMethodGet {
+			response, err = DoGetRequest(ctx, c, params)
+		} else {
+			response, err = DoPostRequest(ctx, c, params)
+		}
+
+		// If successful, return immediately
+		if err == nil && response != nil && response.StatusCode == http.StatusOK {
+			return response, nil
+		}
+
+		// Store the last error and response for potential return
+		lastErr = err
+		lastResponse = response
+
+		// Check if we should retry
+		if attempt < maxAttempts && isRetryableError(err, response) {
+			// Close the response body if it exists before retrying
+			if response != nil && response.Body != nil {
+				response.Body.Close()
+			}
+
+			// Calculate backoff and wait
+			backoff := calculateBackoff(attempt, c.RetryConfig)
+			if backoff > 0 {
+				select {
+				case <-time.After(backoff):
+					// Continue to next attempt
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+		} else {
+			// Not retryable or last attempt, return the result
+			break
 		}
 	}
-	if c.RequestMethod == RequestMethodGet {
-		return DoGetRequest(ctx, c, params)
-	}
-	return DoPostRequest(ctx, c, params)
+
+	return lastResponse, lastErr
 }
 
 // Search makes a search request to the arXiv API and returns the parsed response.
