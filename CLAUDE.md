@@ -55,7 +55,7 @@ This is a Go library that provides a client interface to the arXiv.org metadata 
 
 #### Data Types
 - **SearchParams**: Configures search requests (Query, IdList, Start, MaxResults, SortBy, SortOrder)
-- **SearchResults**: Contains parsed results with metadata (renamed from SearchResponse)
+- **SearchResults**: Contains parsed results with metadata
 - **EntryMetadata**: Individual paper data (Title, Authors, Abstract, Categories, Links, DOI, etc.)
 - **RequestMethod**: Typed constant for GET/POST
 - **SortBy**: Typed constants (SortByRelevance, SortByLastUpdatedDate, SortBySubmittedDate)
@@ -167,7 +167,7 @@ go mod tidy
 
 6. **Context Support**: All API methods accept a `context.Context` parameter for proper cancellation and timeout handling.
 
-7. **Testing Strategy**: 
+7. **Testing Strategy**:
    - Unit tests use mock XML data to test parsing logic
    - Interceptor tests verify interceptor functionality and chaining
    - Retry tests verify behavior under various failure scenarios
@@ -310,18 +310,18 @@ client := arxiv.NewClient(
 func LoggingInterceptor(logger *log.Logger) arxiv.Interceptor {
     return func(ctx context.Context, params arxiv.SearchParams, next arxiv.SearchFunc) (arxiv.SearchResults, error) {
         start := time.Now()
-        
+
         logger.Printf("Starting search with query: %s", params.Query)
-        
+
         result, err := next(ctx, params)
         duration := time.Since(start)
-        
+
         if err != nil {
             logger.Printf("Search failed after %v: %v", duration, err)
         } else {
             logger.Printf("Search completed in %v with %d results", duration, result.TotalResults)
         }
-        
+
         return result, err
     }
 }
@@ -338,18 +338,18 @@ client := arxiv.NewClient(
 func CachingInterceptor(cache Cache, ttl time.Duration) arxiv.Interceptor {
     return func(ctx context.Context, params arxiv.SearchParams, next arxiv.SearchFunc) (arxiv.SearchResults, error) {
         key := fmt.Sprintf("arxiv:%s:%d:%d", params.Query, params.Start, params.MaxResults)
-        
+
         // Try cache first
         if cached, found := cache.Get(key); found {
             return cached.(arxiv.SearchResults), nil
         }
-        
+
         // Cache miss - call API
         result, err := next(ctx, params)
         if err == nil {
             cache.Set(key, result, ttl)
         }
-        
+
         return result, err
     }
 }

@@ -22,26 +22,26 @@ import (
     "context"
     "fmt"
     "log"
-    
+
     "github.com/Epistemic-Technology/arxiv/arxiv"
 )
 
 func main() {
     // Create a client with default configuration
     client := arxiv.NewClient()
-    
+
     // Search for papers
     ctx := context.Background()
     params := arxiv.SearchParams{
         Query:      "all:electron",
         MaxResults: 10,
     }
-    
+
     response, err := client.Search(ctx, params)
     if err != nil {
         log.Fatal(err)
     }
-    
+
     for _, entry := range response.Entries {
         fmt.Printf("Title: %s\n", entry.Title)
         fmt.Printf("Authors: %v\n", entry.Authors)
@@ -106,7 +106,7 @@ count := 0
 for entry := range client.SearchIter(ctx, params) {
     fmt.Printf("[%d] %s\n", count+1, entry.Title)
     count++
-    
+
     // Stop after processing 500 papers
     if count >= 500 {
         break
@@ -198,8 +198,8 @@ if err != nil {
     log.Fatal(err)
 }
 
-fmt.Printf("Showing results %d-%d of %d\n", 
-    response.StartIndex+1, 
+fmt.Printf("Showing results %d-%d of %d\n",
+    response.StartIndex+1,
     response.StartIndex+len(response.Entries),
     response.TotalResults)
 

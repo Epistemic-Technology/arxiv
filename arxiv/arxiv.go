@@ -485,7 +485,7 @@ func (c *Client) doSearch(ctx context.Context, params SearchParams) (SearchResul
 	return parsedResponse, nil
 }
 
-// SearchNext retrieves the next page of results based on the current SearchResponse.
+// SearchNext retrieves the next page of results based on the current SearchResults.
 func (c *Client) SearchNext(ctx context.Context, response SearchResults) (SearchResults, error) {
 	if !SearchHasMoreResults(response) {
 		return SearchResults{}, errors.New("no more results")
@@ -494,15 +494,13 @@ func (c *Client) SearchNext(ctx context.Context, response SearchResults) (Search
 	return c.Search(ctx, response.Params)
 }
 
-// SearchPrevious retrieves the previous page of results based on the current SearchResponse.
+// SearchPrevious retrieves the previous page of results based on the current SearchResults.
 func (c *Client) SearchPrevious(ctx context.Context, response SearchResults) (SearchResults, error) {
 	if !SearchHasPreviousResults(response) {
 		return SearchResults{}, errors.New("no more results")
 	}
 	response.Params.Start = response.StartIndex - response.ItemsPerPage
-	if response.Params.Start < 0 {
-		response.Params.Start = 0
-	}
+	response.Params.Start = max(response.Params.Start, 0)
 	return c.Search(ctx, response.Params)
 }
 
@@ -587,22 +585,22 @@ func DoPostRequest(ctx context.Context, client *Client, params SearchParams) (*h
 // ParseResponse parses a search response from the arXiv API.
 func ParseResponse(responseData io.Reader) (SearchResults, error) {
 	decoder := xml.NewDecoder(responseData)
-	var searchResponse SearchResults
-	err := decoder.Decode(&searchResponse)
+	var searchResults SearchResults
+	err := decoder.Decode(&searchResults)
 	if err != nil {
 		return SearchResults{}, err
 	}
-	for i := range searchResponse.Entries {
-		for _, link := range searchResponse.Entries[i].Links {
+	for i := range searchResults.Entries {
+		for _, link := range searchResults.Entries[i].Links {
 			if link.Rel == "alternate" {
-				searchResponse.Entries[i].AbstractUrl = link.Href
+				searchResults.Entries[i].AbstractUrl = link.Href
 			}
 			if link.Rel == "related" && link.Title == "pdf" {
-				searchResponse.Entries[i].PDFUrl = link.Href
+				searchResults.Entries[i].PDFUrl = link.Href
 			}
 		}
 	}
-	return searchResponse, nil
+	return searchResults, nil
 }
 
 // ParseSingleEntry parses a single entry from the arXiv API.
