@@ -240,12 +240,12 @@ const (
 //
 // [arXiv API documentation]: https://info.arxiv.org/help/api/user-manual.html#_query_interface
 type SearchParams struct {
-	Query      string
-	IdList     []string
-	Start      int
-	MaxResults int
-	SortBy     SortBy
-	SortOrder  SortOrder
+	Query      string    `json:"query,omitempty"`
+	IdList     []string  `json:"idList,omitempty"`
+	Start      int       `json:"start,omitempty"`
+	MaxResults int       `json:"maxResults,omitempty"`
+	SortBy     SortBy    `json:"sortBy,omitempty"`
+	SortOrder  SortOrder `json:"sortOrder,omitempty"`
 }
 
 func (p SearchParams) Validate() error {
@@ -281,52 +281,52 @@ const (
 // SearchResults contains metadata for search results returned by the arXiv API.
 // The Params field contains the parameters used to make the search request.
 type SearchResults struct {
-	Links        []Link          `xml:"link"`         // Links included in the response. Includes link for current search.
-	Title        string          `xml:"title"`        // Title of the search response, includes search query.
-	ID           string          `xml:"id"`           // ID of the search response, as a URL.
-	Updated      string          `xml:"updated"`      // Time the search response was updated (generally the time it was made).
-	TotalResults int             `xml:"totalResults"` // Total number of results available for the search query.
-	StartIndex   int             `xml:"startIndex"`   // Index of the first result returned in the current response.
-	ItemsPerPage int             `xml:"itemsPerPage"` // Number of results returned in the current response.
-	Entries      []EntryMetadata `xml:"entry"`        // Metadata for each entry in the search response.
-	Params       SearchParams    // Parameters used to make the search request.
+	Links        []Link          `xml:"link" json:"links,omitempty"`                // Links included in the response. Includes link for current search.
+	Title        string          `xml:"title" json:"title,omitempty"`               // Title of the search response, includes search query.
+	ID           string          `xml:"id" json:"id,omitempty"`                     // ID of the search response, as a URL.
+	Updated      string          `xml:"updated" json:"updated,omitempty"`           // Time the search response was updated (generally the time it was made).
+	TotalResults int             `xml:"totalResults" json:"totalResults,omitempty"` // Total number of results available for the search query.
+	StartIndex   int             `xml:"startIndex" json:"startIndex,omitempty"`     // Index of the first result returned in the current response.
+	ItemsPerPage int             `xml:"itemsPerPage" json:"itemsPerPage,omitempty"` // Number of results returned in the current response.
+	Entries      []EntryMetadata `xml:"entry" json:"entries,omitempty"`             // Metadata for each entry in the search response.
+	Params       SearchParams    `json:"params,omitempty"`                          // Parameters used to make the search request.
 }
 
 // EntryMetadata contains metadata for a single entry in the search response.
 type EntryMetadata struct {
-	Title            string     `xml:"title"`            // Title of the entry.
-	ID               string     `xml:"id"`               // ID of the entry, as a URL.
-	Published        time.Time  `xml:"published"`        // Time the entry was published.
-	Updated          time.Time  `xml:"updated"`          // Time the entry was last updated.
-	Summary          string     `xml:"summary"`          // Summary (abstract) of the entry.
-	Authors          []Author   `xml:"author"`           // Authors of the entry.
-	Categories       []Category `xml:"category"`         // Subject categories of the entry.
-	PrimaryCategory  Category   `xml:"primary_category"` // Primary subject category of the entry.
-	Links            []Link     `xml:"link"`             // Links included in the entry. Includes link to the PDF.
-	Comment          string     `xml:"comment"`          // Comment on the entry. Includes information such as where the paper was submitted or number of pages, figures, etc.
-	JournalReference string     `xml:"journal_ref"`      // Journal reference for the entry.
-	DOI              string     `xml:"doi"`              // Digital Object Identifier (DOI) for the entry.
-	AbstractUrl      string     // URL of the abstract associated with the entry.
-	PDFUrl           string     // URL of the PDF file associated with the entry.
+	Title            string     `xml:"title" json:"title,omitempty"`                      // Title of the entry.
+	ID               string     `xml:"id" json:"id,omitempty"`                            // ID of the entry, as a URL.
+	Published        time.Time  `xml:"published" json:"published,omitempty"`              // Time the entry was published.
+	Updated          time.Time  `xml:"updated" json:"updated,omitempty"`                  // Time the entry was last updated.
+	Summary          string     `xml:"summary" json:"summary,omitempty"`                  // Summary (abstract) of the entry.
+	Authors          []Author   `xml:"author" json:"authors,omitempty"`                   // Authors of the entry.
+	Categories       []Category `xml:"category" json:"categories,omitempty"`              // Subject categories of the entry.
+	PrimaryCategory  Category   `xml:"primary_category" json:"primaryCategory,omitempty"` // Primary subject category of the entry.
+	Links            []Link     `xml:"link" json:"links,omitempty"`                       // Links included in the entry. Includes link to the PDF.
+	Comment          string     `xml:"comment" json:"comment,omitempty"`                  // Comment on the entry. Includes information such as where the paper was submitted or number of pages, figures, etc.
+	JournalReference string     `xml:"journal_ref" json:"journalReference,omitempty"`     // Journal reference for the entry.
+	DOI              string     `xml:"doi" json:"doi,omitempty"`                          // Digital Object Identifier (DOI) for the entry.
+	AbstractUrl      string     `json:"abstractUrl,omitempty"`                            // URL of the abstract associated with the entry.
+	PDFUrl           string     `json:"pdfUrl,omitempty"`                                 // URL of the PDF file associated with the entry.
 }
 
 // Author contains information about an author of a paper.
 type Author struct {
-	Name        string `xml:"name"`
-	Affiliation string `xml:"affiliation"`
+	Name        string `xml:"name" json:"name,omitempty"`
+	Affiliation string `xml:"affiliation" json:"affiliation,omitempty"`
 }
 
 // Category contains information about a subject category of a paper.
 type Category struct {
-	Term string `xml:"term,attr"`
+	Term string `xml:"term,attr" json:"term,omitempty"`
 }
 
 // Link contains information about a link associated with a paper.
 type Link struct {
-	Href  string `xml:"href,attr"`
-	Rel   string `xml:"rel,attr"`
-	Type  string `xml:"type,attr"`
-	Title string `xml:"title,attr"`
+	Href  string `xml:"href,attr" json:"href,omitempty"`
+	Rel   string `xml:"rel,attr" json:"rel,omitempty"`
+	Type  string `xml:"type,attr" json:"type,omitempty"`
+	Title string `xml:"title,attr" json:"title,omitempty"`
 }
 
 // isRetryableError determines if an error is retryable.
